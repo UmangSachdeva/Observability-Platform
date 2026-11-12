@@ -57,19 +57,64 @@ func (s *ErrorService) Create(ctx context.Context, accountID, projectID string, 
 	return event, nil
 }
 
-// ListByProject returns a project's latest events to a member of its account.
-func (s *ErrorService) ListByProject(ctx context.Context, accountID, projectID, userID string, limit int) ([]entity.ErrorEvent, error) {
-	if limit < 1 || limit > 500 {
-		return nil, utils.NewError(400, "validation_error", "limit must be between 1 and 500")
+// SearchProject searches one project's events for a member of its account.
+func (s *ErrorService) SearchProject(ctx context.Context, accountID, projectID, userID string, request dtos.SearchErrorsRequest) (dtos.ListErrorsResponse, error) {
+	if len(request.ProjectIDs) > 0 {
+		return dtos.ListErrorsResponse{}, utils.NewError(400, "validation_error",
+			"project_id is only accepted by GET /v1/accounts/{accountID}/errors")
 	}
 	if err := requireProjectAccess(ctx, s.accounts, s.projects, accountID, projectID, userID); err != nil {
-		return nil, err
+		return dtos.ListErrorsResponse{}, err
 	}
-	events, err := s.repository.ListByProject(ctx, projectID, limit)
+	request.ProjectIDs = []string{projectID}
+	return s.search(ctx, accountID, request)
+}
+
+// SearchAccount searches every project of the account, optionally narrowed
+// with project_id, for a member of the account.
+func (s *ErrorService) SearchAccount(ctx context.Context, accountID, userID string, request dtos.SearchErrorsRequest) (dtos.ListErrorsResponse, error) {
+	member, err := s.accounts.IsMember(ctx, accountID, userID)
 	if err != nil {
-		return nil, utils.WrapError(503, "storage_unavailable", "Could not load error events", err)
+		return dtos.ListErrorsResponse{}, utils.WrapError(503, "storage_unavailable", "Could not verify account membership", err)
 	}
-	return events, nil
+	if !member {
+		return dtos.ListErrorsResponse{}, utils.NewError(403, "forbidden", "You are not a member of this account")
+	}
+	return s.search(ctx, accountID, request)
+}
+
+func (s *ErrorService) search(ctx context.Context, accountID string, request dtos.SearchErrorsRequest) (dtos.ListErrorsResponse, error) {
+	query, err := validation.ParseErrorSearch(request)
+	if err != nil {
+		return dtos.ListErrorsResponse{}, err
+	}
+	query.AccountID = accountID
+	fingerprint := queryFingerprint(query)
+	if request.Cursor != "" {
+		after, err := decodeErrorCursor(request.Cursor, query, fingerprint)
+		if err != nil {
+			return dtos.ListErrorsResponse{}, utils.NewError(400, "invalid_cursor",
+				"cursor is invalid or was created for different filters or sort")
+		}
+		query.After = after
+	}
+	pageSize := query.Limit
+	query.Limit = pageSize + 1 // one extra row tells whether another page exists
+	events, err := s.repository.Search(ctx, query)
+	if err != nil {
+		return dtos.ListErrorsResponse{}, utils.WrapError(503, "storage_unavailable", "Could not load error events", err)
+	}
+	response := dtos.ListErrorsResponse{}
+	if len(events) > pageSize {
+		events = events[:pageSize]
+		response.HasMore = true
+		response.NextCursor = encodeErrorCursor(query, fingerprint, events[len(events)-1])
+	}
+	response.Errors = make([]dtos.ErrorEventResponse, 0, len(events))
+	for _, event := range events {
+		response.Errors = append(response.Errors, mapper.EntityToErrorEventResponse(event))
+	}
+	return response, nil
 }
 
 func newID() (string, error) {

@@ -85,6 +85,14 @@ func New(ctx context.Context, config Config, logger *slog.Logger) (*Server, erro
 		_ = mongoClient.Close(context.Background())
 		return nil, err
 	}
+	if err := mongoClient.CreateIndex(ctx, config.MongoCollection, bson.D{{Key: "account_id", Value: 1}, {Key: "received_at", Value: -1}}, false); err != nil {
+		_ = mongoClient.Close(context.Background())
+		return nil, err
+	}
+	if err := mongoClient.CreateIndex(ctx, config.MongoCollection, bson.D{{Key: "project_id", Value: 1}, {Key: "timestamp", Value: -1}}, false); err != nil {
+		_ = mongoClient.Close(context.Background())
+		return nil, err
+	}
 	if err := mongoClient.CreateIndex(ctx, config.MongoProjectsCollection, bson.D{{Key: "id", Value: 1}}, true); err != nil {
 		_ = mongoClient.Close(context.Background())
 		return nil, err

@@ -43,7 +43,8 @@ unavailable.
 - `GET /v1/invites` lists pending invitations for the caller's email (user JWT required).
 - `PATCH /v1/invites/{inviteID}` snoozes or un-snoozes a pending invitation (user JWT required).
 - `POST /v1/errors` accepts one JSON error event for the API key's project and returns `202 Accepted`.
-- `GET /v1/accounts/{accountID}/projects/{projectID}/errors?limit=100` lists a project's latest events (user JWT required, maximum limit: 500).
+- `GET /v1/accounts/{accountID}/projects/{projectID}/errors` searches one project's events with filters, sorting and cursor pagination (user JWT required).
+- `GET /v1/accounts/{accountID}/errors` searches events across every project in the account (user JWT required).
 
 Generate an encryption key before starting the server:
 
@@ -204,6 +205,48 @@ configured collection with their `account_id` and `project_id`, sorted by
 receipt time when listed. Members of the account read them with
 `GET /v1/accounts/<account_id>/projects/<project_id>/errors` and their user JWT.
 Events stored before this change have no project and are not returned.
+
+## Searching events
+
+Both search endpoints need a user bearer JWT from a member of the account:
+
+- `GET /v1/accounts/<account_id>/projects/<project_id>/errors` searches one project.
+- `GET /v1/accounts/<account_id>/errors` searches every project in the account.
+  Narrow it with `project_id`.
+
+Query parameters (all optional):
+
+| Parameter | Meaning |
+|---|---|
+| `q` | Case-insensitive text match in `message`, `service`, `environment` or `stack_trace` (max 200 characters). |
+| `service`, `environment`, `level`, `project_id` | Exact match. Repeat the parameter or separate values with commas: `level=error,warning`. Up to 20 values each. `level` is case-insensitive. `project_id` is only accepted by the account-wide endpoint. |
+| `attr.<key>` | Exact match on an attribute, e.g. `attr.region=eu-west-1`. Keys may contain letters, digits, `_` and `-`. Up to 10. |
+| `from`, `to` | RFC 3339 range on `received_at`, inclusive. |
+| `sort` | `received_at` (default, newest first as `-received_at`), `timestamp`, `level` or `service`. Prefix with `-` for descending. Ties are ordered by event `id`. |
+| `limit` | Page size, 1–500 (default 100). |
+| `cursor` | The `next_cursor` from the previous page. |
+
+The response is `{"errors":[...],"has_more":true,"next_cursor":"..."}`. To get
+the next page, repeat the same request with `cursor=<next_cursor>`. A cursor
+only works with the filters and sort it was created for; otherwise the API
+returns `400 invalid_cursor`. Pagination is keyset-based, so events arriving
+while you page through do not shift or repeat results. `next_cursor` is
+omitted on the last page.
+
+Example:
+
+```sh
+curl -G http://localhost:8080/v1/accounts/<account_id>/errors \
+  -H 'Authorization: Bearer <user-jwt>' \
+  --data-urlencode 'q=timeout' \
+  --data-urlencode 'level=error,fatal' \
+  --data-urlencode 'environment=production' \
+  --data-urlencode 'sort=-timestamp' \
+  --data-urlencode 'limit=50'
+```
+
+Text search scans the matching project or account events, so it is slower than
+the exact-match filters on large data sets.
 
 ## Layers
 

@@ -41,6 +41,25 @@ type ErrorDetail struct {
 
 type ListErrorsResponse struct {
 	Errors []ErrorEventResponse `json:"errors"`
+	// NextCursor is set when more results exist; pass it as ?cursor= with the
+	// same filters and sort to get the next page.
+	NextCursor string `json:"next_cursor,omitempty"`
+	HasMore    bool   `json:"has_more"`
+}
+
+// SearchErrorsRequest holds the raw query parameters of an error search.
+type SearchErrorsRequest struct {
+	Query        string
+	ProjectIDs   []string
+	Services     []string
+	Environments []string
+	Levels       []string
+	Attributes   map[string]string
+	From         string
+	To           string
+	Sort         string
+	Limit        string
+	Cursor       string
 }
 
 type CreateAPIKeyRequest struct {

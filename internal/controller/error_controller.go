@@ -4,11 +4,11 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
-	"strconv"
+	"net/url"
+	"strings"
 	"time"
 
 	"observability-platform/internal/dtos"
-	"observability-platform/internal/mapper"
 	"observability-platform/internal/middleware"
 	"observability-platform/internal/service"
 	"observability-platform/internal/utils"
@@ -37,6 +37,7 @@ func (c *ErrorController) RegisterProtectedRoutes(mux *http.ServeMux) {
 // RegisterUserRoutes registers routes that need a user bearer token.
 func (c *ErrorController) RegisterUserRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/accounts/{accountID}/projects/{projectID}/errors", c.list)
+	mux.HandleFunc("GET /v1/accounts/{accountID}/errors", c.searchAccount)
 }
 
 func (c *ErrorController) health(w http.ResponseWriter, _ *http.Request) {
@@ -72,30 +73,68 @@ func (c *ErrorController) list(w http.ResponseWriter, r *http.Request) {
 		utils.WriteError(w, utils.NewError(http.StatusUnauthorized, "unauthorized", "Valid user bearer token required"))
 		return
 	}
-	limit := 100
-	if raw := r.URL.Query().Get("limit"); raw != "" {
-		parsed, err := strconv.Atoi(raw)
-		if err != nil || parsed < 1 || parsed > 500 {
-			utils.WriteErrorResponse(w, http.StatusBadRequest, "validation_error", "limit must be between 1 and 500")
-			return
-		}
-		limit = parsed
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	response, err := c.service.SearchProject(ctx, r.PathValue("accountID"), r.PathValue("projectID"), user.ID, searchRequestFromQuery(r.URL.Query()))
+	c.writeSearch(w, response, err)
+}
+
+func (c *ErrorController) searchAccount(w http.ResponseWriter, r *http.Request) {
+	user, ok := middleware.UserFromContext(r.Context())
+	if !ok {
+		utils.WriteError(w, utils.NewError(http.StatusUnauthorized, "unauthorized", "Valid user bearer token required"))
+		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
-	events, err := c.service.ListByProject(ctx, r.PathValue("accountID"), r.PathValue("projectID"), user.ID, limit)
+	response, err := c.service.SearchAccount(ctx, r.PathValue("accountID"), user.ID, searchRequestFromQuery(r.URL.Query()))
+	c.writeSearch(w, response, err)
+}
+
+func (c *ErrorController) writeSearch(w http.ResponseWriter, response dtos.ListErrorsResponse, err error) {
 	if err != nil {
 		if status, _, _ := utils.ErrorResponse(err); status >= 500 {
-			c.logger.Error("could not query error events", "error", err)
+			c.logger.Error("could not search error events", "error", err)
 		}
 		utils.WriteError(w, err)
 		return
 	}
-	response := dtos.ListErrorsResponse{Errors: make([]dtos.ErrorEventResponse, 0, len(events))}
-	for _, event := range events {
-		response.Errors = append(response.Errors, mapper.EntityToErrorEventResponse(event))
-	}
 	utils.WriteJSON(w, http.StatusOK, response)
+}
+
+// searchRequestFromQuery reads search parameters. List filters accept repeated
+// parameters (?level=error&level=warning) and comma-separated values
+// (?level=error,warning). Attribute filters use attr.<key>=<value>.
+func searchRequestFromQuery(values url.Values) dtos.SearchErrorsRequest {
+	request := dtos.SearchErrorsRequest{
+		Query:        values.Get("q"),
+		ProjectIDs:   splitValues(values["project_id"]),
+		Services:     splitValues(values["service"]),
+		Environments: splitValues(values["environment"]),
+		Levels:       splitValues(values["level"]),
+		From:         values.Get("from"),
+		To:           values.Get("to"),
+		Sort:         values.Get("sort"),
+		Limit:        values.Get("limit"),
+		Cursor:       values.Get("cursor"),
+	}
+	for key, vals := range values {
+		if name, ok := strings.CutPrefix(key, "attr."); ok && len(vals) > 0 {
+			if request.Attributes == nil {
+				request.Attributes = map[string]string{}
+			}
+			request.Attributes[name] = vals[len(vals)-1]
+		}
+	}
+	return request
+}
+
+func splitValues(values []string) []string {
+	var split []string
+	for _, value := range values {
+		split = append(split, strings.Split(value, ",")...)
+	}
+	return split
 }
 
 func RequestLogger(logger *slog.Logger, next http.Handler) http.Handler {
