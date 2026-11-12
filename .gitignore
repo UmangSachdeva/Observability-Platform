@@ -1,0 +1,62 @@
+# Local environment files and credentials
+.env
+.env.*
+!.env.example
+!.env.template
+*.secret
+*.secrets
+secrets/
+credentials/
+credentials.json
+*-credentials.json
+service-account*.json
+
+# Private keys and local TLS material
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.ppk
+id_rsa
+id_rsa.*
+id_ed25519
+id_ed25519.*
+id_ecdsa
+id_ecdsa.*
+id_dsa
+id_dsa.*
+
+# Local credential stores
+.netrc
+.npmrc
+!.npmrc.example
+.pypirc
+.aws/
+.azure/
+.gcloud/
+.docker/
+
+# Go build and debug outputs
+/bin/
+/server
+/cmd/server/server
+__debug_bin*
+*.exe
+*.test
+*.out
+coverage.out
+coverage.html
+
+# Local databases and logs
+*.db
+*.sqlite
+*.sqlite3
+*.log
+
+# Temporary files and editor/OS state
+tmp/
+temp/
+.vscode/
+.idea/
+.DS_Store
