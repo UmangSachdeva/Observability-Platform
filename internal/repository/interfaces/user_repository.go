@@ -15,4 +15,5 @@ var (
 type UserRepository interface {
 	Create(context.Context, entity.User) error
 	FindByLogin(context.Context, string) (entity.User, error)
+	FindByID(context.Context, string) (entity.User, error)
 }

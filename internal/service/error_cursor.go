@@ -47,6 +47,7 @@ func queryFingerprint(query interfaces.ErrorQuery) string {
 		"services":   sorted(query.Services),
 		"envs":       sorted(query.Environments),
 		"levels":     sorted(query.Levels),
+		"trace":      query.TraceID,
 		"attributes": query.Attributes,
 		"from":       formatTime(query.From),
 		"to":         formatTime(query.To),

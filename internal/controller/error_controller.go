@@ -8,7 +8,10 @@ import (
 	"strings"
 	"time"
 
+	"go.opentelemetry.io/otel/trace"
+
 	"observability-platform/internal/dtos"
+	"observability-platform/internal/mapper"
 	"observability-platform/internal/middleware"
 	"observability-platform/internal/service"
 	"observability-platform/internal/utils"
@@ -38,6 +41,41 @@ func (c *ErrorController) RegisterProtectedRoutes(mux *http.ServeMux) {
 func (c *ErrorController) RegisterUserRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/accounts/{accountID}/projects/{projectID}/errors", c.list)
 	mux.HandleFunc("GET /v1/accounts/{accountID}/errors", c.searchAccount)
+	mux.HandleFunc("GET /v1/accounts/{accountID}/projects/{projectID}/errors/{errorID}", c.get)
+	mux.HandleFunc("GET /v1/accounts/{accountID}/projects/{projectID}/errors/{errorID}/occurrences", c.occurrences)
+}
+
+func (c *ErrorController) get(w http.ResponseWriter, r *http.Request) {
+	user, ok := middleware.UserFromContext(r.Context())
+	if !ok {
+		utils.WriteError(w, utils.NewError(http.StatusUnauthorized, "unauthorized", "Valid user bearer token required"))
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	event, err := c.service.GetProjectEvent(ctx, r.PathValue("accountID"), r.PathValue("projectID"), r.PathValue("errorID"), user.ID)
+	if err != nil {
+		if status, _, _ := utils.ErrorResponse(err); status >= 500 {
+			c.logger.Error("could not load error event", "error", err)
+		}
+		utils.WriteError(w, err)
+		return
+	}
+	utils.WriteJSON(w, http.StatusOK, mapper.EntityToErrorEventResponse(event))
+}
+
+// occurrences lists when one error happened, newest first.
+func (c *ErrorController) occurrences(w http.ResponseWriter, r *http.Request) {
+	user, ok := middleware.UserFromContext(r.Context())
+	if !ok {
+		utils.WriteError(w, utils.NewError(http.StatusUnauthorized, "unauthorized", "Valid user bearer token required"))
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	response, err := c.service.ListOccurrences(ctx, r.PathValue("accountID"), r.PathValue("projectID"), r.PathValue("errorID"), user.ID,
+		r.URL.Query().Get("limit"), r.URL.Query().Get("cursor"))
+	c.writeSearch(w, response, err)
 }
 
 func (c *ErrorController) health(w http.ResponseWriter, _ *http.Request) {
@@ -56,7 +94,7 @@ func (c *ErrorController) create(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
-	event, err := c.service.Create(ctx, client.AccountID, client.ProjectID, request)
+	event, duplicate, err := c.service.Create(ctx, client.AccountID, client.ProjectID, request)
 	if err != nil {
 		if status, _, _ := utils.ErrorResponse(err); status >= 500 {
 			c.logger.Error("could not store error event", "error", err)
@@ -64,7 +102,11 @@ func (c *ErrorController) create(w http.ResponseWriter, r *http.Request) {
 		utils.WriteError(w, err)
 		return
 	}
-	utils.WriteJSON(w, http.StatusAccepted, dtos.CreateErrorResponse{ID: event.ID, Status: "accepted"})
+	status := "accepted"
+	if duplicate {
+		status = "duplicate" // a retried or replayed delivery; not counted again
+	}
+	utils.WriteJSON(w, http.StatusAccepted, dtos.CreateErrorResponse{ID: event.ID, Status: status})
 }
 
 func (c *ErrorController) list(w http.ResponseWriter, r *http.Request) {
@@ -91,7 +133,7 @@ func (c *ErrorController) searchAccount(w http.ResponseWriter, r *http.Request) 
 	c.writeSearch(w, response, err)
 }
 
-func (c *ErrorController) writeSearch(w http.ResponseWriter, response dtos.ListErrorsResponse, err error) {
+func (c *ErrorController) writeSearch(w http.ResponseWriter, response any, err error) {
 	if err != nil {
 		if status, _, _ := utils.ErrorResponse(err); status >= 500 {
 			c.logger.Error("could not search error events", "error", err)
@@ -112,6 +154,7 @@ func searchRequestFromQuery(values url.Values) dtos.SearchErrorsRequest {
 		Services:     splitValues(values["service"]),
 		Environments: splitValues(values["environment"]),
 		Levels:       splitValues(values["level"]),
+		TraceID:      values.Get("trace_id"),
 		From:         values.Get("from"),
 		To:           values.Get("to"),
 		Sort:         values.Get("sort"),
@@ -141,6 +184,10 @@ func RequestLogger(logger *slog.Logger, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		started := time.Now()
 		next.ServeHTTP(w, r)
-		logger.Info("http request", "method", r.Method, "path", r.URL.Path, "duration", time.Since(started))
+		attributes := []any{"method", r.Method, "path", r.URL.Path, "duration", time.Since(started)}
+		if sc := trace.SpanContextFromContext(r.Context()); sc.IsValid() {
+			attributes = append(attributes, "trace_id", sc.TraceID().String())
+		}
+		logger.InfoContext(r.Context(), "http request", attributes...)
 	})
 }

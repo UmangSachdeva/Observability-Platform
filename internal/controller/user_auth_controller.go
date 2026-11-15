@@ -15,18 +15,48 @@ import (
 )
 
 type UserAuthController struct {
-	service *service.UserService
-	logger  *slog.Logger
-	limiter *utils.KeyIssueLimiter
+	service        *service.UserService
+	logger         *slog.Logger
+	limiter        *utils.KeyIssueLimiter
+	refreshLimiter *utils.KeyIssueLimiter
 }
 
 func NewUserAuthController(userService *service.UserService, logger *slog.Logger) *UserAuthController {
-	return &UserAuthController{service: userService, logger: logger, limiter: utils.NewKeyIssueLimiter(10, time.Minute)}
+	return &UserAuthController{
+		service: userService, logger: logger,
+		limiter: utils.NewKeyIssueLimiter(10, time.Minute),
+		// Refreshes are automatic and frequent, so they get their own, larger budget.
+		refreshLimiter: utils.NewKeyIssueLimiter(60, time.Minute),
+	}
 }
 
 func (c *UserAuthController) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/auth/signup", c.signup)
 	mux.HandleFunc("POST /v1/auth/login", c.login)
+	mux.HandleFunc("POST /v1/auth/refresh", c.refresh)
+}
+
+func (c *UserAuthController) refresh(w http.ResponseWriter, r *http.Request) {
+	if !c.refreshLimiter.Allow(clientIP(r)) {
+		utils.WriteErrorResponse(w, http.StatusTooManyRequests, "rate_limited", "Too many refresh requests; try again later")
+		return
+	}
+	var request dtos.RefreshRequest
+	if !decodeRequest(w, r, &request, 16*1024) {
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	response, err := c.service.Refresh(ctx, request)
+	if err != nil {
+		if status, _, _ := utils.ErrorResponse(err); status >= 500 {
+			c.logger.Error("token refresh failed", "error", err)
+		}
+		utils.WriteError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	utils.WriteJSON(w, http.StatusOK, response)
 }
 
 func (c *UserAuthController) signup(w http.ResponseWriter, r *http.Request) {

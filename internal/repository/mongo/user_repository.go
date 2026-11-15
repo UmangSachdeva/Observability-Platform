@@ -47,3 +47,15 @@ func (r *userRepository) FindByLogin(ctx context.Context, login string) (entity.
 	}
 	return user, nil
 }
+
+func (r *userRepository) FindByID(ctx context.Context, id string) (entity.User, error) {
+	var user entity.User
+	err := r.mongo.FindOne(ctx, r.collection, bson.D{{Key: "id", Value: id}}, &user)
+	if errors.Is(err, driver.ErrNoDocuments) {
+		return entity.User{}, interfaces.ErrUserNotFound
+	}
+	if err != nil {
+		return entity.User{}, err
+	}
+	return user, nil
+}

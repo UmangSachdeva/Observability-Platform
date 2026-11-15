@@ -52,3 +52,21 @@ func SignatureAuthMiddleware(authService *service.AuthService, next http.Handler
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
+
+// APIKeyAuthMiddleware authenticates OTLP requests by the X-Access-Key and
+// X-Secret-Key headers and puts the key's project in the request context.
+func APIKeyAuthMiddleware(authService *service.AuthService, next http.Handler, logger *slog.Logger) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authCtx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		client, err := authService.AuthenticateKey(authCtx, r.Header.Get("X-Access-Key"), r.Header.Get("X-Secret-Key"))
+		if err != nil {
+			if status, _, _ := utils.ErrorResponse(err); status >= 500 {
+				logger.Error("could not verify API key", "error", err)
+			}
+			utils.WriteError(w, err)
+			return
+		}
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), clientContextKey{}, client)))
+	})
+}

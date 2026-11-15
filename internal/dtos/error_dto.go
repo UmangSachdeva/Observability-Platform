@@ -10,6 +10,10 @@ type CreateErrorRequest struct {
 	Message     string            `json:"message"`
 	StackTrace  string            `json:"stack_trace"`
 	Attributes  map[string]string `json:"attributes"`
+	// TraceID and SpanID link the event to an OpenTelemetry trace (lowercase
+	// hex, 32 and 16 characters). Both are optional.
+	TraceID string `json:"trace_id"`
+	SpanID  string `json:"span_id"`
 }
 
 type CreateErrorResponse struct {
@@ -18,16 +22,22 @@ type CreateErrorResponse struct {
 }
 
 type ErrorEventResponse struct {
-	ID          string            `json:"id"`
-	ProjectID   string            `json:"project_id"`
-	Timestamp   time.Time         `json:"timestamp"`
-	ReceivedAt  time.Time         `json:"received_at"`
-	Service     string            `json:"service"`
-	Environment string            `json:"environment,omitempty"`
-	Level       string            `json:"level"`
-	Message     string            `json:"message"`
-	StackTrace  string            `json:"stack_trace,omitempty"`
-	Attributes  map[string]string `json:"attributes,omitempty"`
+	ID string `json:"id"`
+	// OccurrenceCount is how many times this error happened; FirstSeen is
+	// the first time and ReceivedAt the latest.
+	OccurrenceCount int               `json:"occurrence_count"`
+	FirstSeen       time.Time         `json:"first_seen"`
+	ProjectID       string            `json:"project_id"`
+	Timestamp       time.Time         `json:"timestamp"`
+	ReceivedAt      time.Time         `json:"received_at"`
+	Service         string            `json:"service"`
+	Environment     string            `json:"environment,omitempty"`
+	Level           string            `json:"level"`
+	Message         string            `json:"message"`
+	StackTrace      string            `json:"stack_trace,omitempty"`
+	Attributes      map[string]string `json:"attributes,omitempty"`
+	TraceID         string            `json:"trace_id,omitempty"`
+	SpanID          string            `json:"span_id,omitempty"`
 }
 
 type ErrorResponse struct {
@@ -54,6 +64,7 @@ type SearchErrorsRequest struct {
 	Services     []string
 	Environments []string
 	Levels       []string
+	TraceID      string
 	Attributes   map[string]string
 	From         string
 	To           string
@@ -85,4 +96,23 @@ type CreateAPIKeyResponse struct {
 	Algorithm string `json:"algorithm"`
 	AccountID string `json:"account_id"`
 	ProjectID string `json:"project_id"`
+}
+
+// OccurrenceResponse is one time an error happened.
+type OccurrenceResponse struct {
+	ID         string            `json:"id"`
+	Timestamp  time.Time         `json:"timestamp"`
+	ReceivedAt time.Time         `json:"received_at"`
+	TraceID    string            `json:"trace_id,omitempty"`
+	SpanID     string            `json:"span_id,omitempty"`
+	Attributes map[string]string `json:"attributes,omitempty"`
+}
+
+type ListOccurrencesResponse struct {
+	Occurrences []OccurrenceResponse `json:"occurrences"`
+	Total       int                  `json:"total"`
+	FirstSeen   time.Time            `json:"first_seen"`
+	LastSeen    time.Time            `json:"last_seen"`
+	NextCursor  string               `json:"next_cursor,omitempty"`
+	HasMore     bool                 `json:"has_more"`
 }

@@ -54,6 +54,12 @@ func ParseErrorSearch(request dtos.SearchErrorsRequest) (interfaces.ErrorQuery, 
 	if query.Levels, err = filterValues("level", request.Levels, true); err != nil {
 		return interfaces.ErrorQuery{}, err
 	}
+	if traceID := strings.ToLower(strings.TrimSpace(request.TraceID)); traceID != "" {
+		if !IsTraceID(traceID) {
+			return interfaces.ErrorQuery{}, invalidSearch("trace_id must be 32 lowercase hex characters")
+		}
+		query.TraceID = traceID
+	}
 	if len(request.Attributes) > maxAttributeFilters {
 		return interfaces.ErrorQuery{}, invalidSearch("at most 10 attr.<key> filters are allowed")
 	}
