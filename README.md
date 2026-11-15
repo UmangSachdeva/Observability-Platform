@@ -3,6 +3,12 @@
 A small Go HTTP server for receiving application error reports. Accepted
 events are stored in MongoDB.
 
+## Demo
+
+[![Demo: error list, occurrences and an OpenTelemetry trace waterfall in the dashboard](docs/demo/tracewell-demo.gif)](docs/demo/tracewell-demo.mp4)
+
+**[▶ Watch the full demo with voice-over](docs/demo/tracewell-demo.mp4)** (MP4, 1:20), recorded with the [Next.js dashboard](https://github.com/UmangSachdeva/Observability-Platform-frontend) on data from `examples/seed`.
+
 ## Run
 
 ```sh
@@ -342,6 +348,20 @@ for signature checks, event storage and every MongoDB command, and adds
 create a project for the API, then start it with that project's key in
 `OTEL_EXPORTER_OTLP_HEADERS`. Requests to `/v1/traces` and `/healthz` are not
 traced, so the API does not trace the export of its own spans.
+
+## Demo data
+
+`examples/seed` fills a running API with realistic data for trying the
+dashboard: a `storefront` project whose services (api-gateway, checkout-api,
+payments-api, inventory-api, notification-worker) report recurring errors with
+Go, JavaScript and Python stack traces, every occurrence linked to a
+multi-service OpenTelemetry trace, plus healthy traffic and a smaller
+`search-service` project. Timestamps are spread over the last three days.
+
+```sh
+go run ./examples/seed -api http://localhost:8080                     # new user demo@tracewell.dev / demo-password-2026
+go run ./examples/seed -api http://localhost:8080 -login you@example.com -password '...'   # into your own account
+```
 
 ## Go client, demo service and end-to-end check
 

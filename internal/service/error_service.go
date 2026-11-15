@@ -264,7 +264,7 @@ func (s *ErrorService) ListOccurrences(ctx context.Context, accountID, projectID
 		return dtos.ListOccurrencesResponse{}, utils.WrapError(503, "storage_unavailable", "Could not load occurrences", err)
 	}
 	summary := mapper.EntityToErrorEventResponse(event)
-	response := dtos.ListOccurrencesResponse{Total: summary.OccurrenceCount, FirstSeen: summary.FirstSeen, LastSeen: event.ReceivedAt}
+	response := dtos.ListOccurrencesResponse{Total: summary.OccurrenceCount, FirstSeen: summary.FirstSeen, LastSeen: event.Timestamp}
 	if len(occurrences) == 0 && after == nil && event.OccurrenceCount == 0 {
 		// Stored before grouping: the event itself is its only occurrence.
 		occurrences = []entity.ErrorOccurrence{{

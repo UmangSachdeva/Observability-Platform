@@ -24,7 +24,8 @@ type CreateErrorResponse struct {
 type ErrorEventResponse struct {
 	ID string `json:"id"`
 	// OccurrenceCount is how many times this error happened; FirstSeen is
-	// the first time and ReceivedAt the latest.
+	// when it first happened and Timestamp when it last happened (by the
+	// occurrence timestamps the clients sent).
 	OccurrenceCount int               `json:"occurrence_count"`
 	FirstSeen       time.Time         `json:"first_seen"`
 	ProjectID       string            `json:"project_id"`

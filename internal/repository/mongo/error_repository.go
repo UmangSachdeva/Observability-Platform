@@ -56,7 +56,7 @@ func (r *errorRepository) upsertError(ctx context.Context, event entity.ErrorEve
 			{Key: "message", Value: event.Message},
 			{Key: "stack_trace", Value: event.StackTrace},
 		}},
-		{Key: "$min", Value: bson.D{{Key: "first_seen", Value: occurrence.ReceivedAt}}},
+		{Key: "$min", Value: bson.D{{Key: "first_seen", Value: occurrence.Timestamp}}},
 		{Key: "$max", Value: bson.D{{Key: "received_at", Value: occurrence.ReceivedAt}, {Key: "timestamp", Value: occurrence.Timestamp}}},
 		{Key: "$set", Value: bson.D{
 			{Key: "attributes", Value: occurrence.Attributes},

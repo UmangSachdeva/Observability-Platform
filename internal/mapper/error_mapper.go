@@ -22,7 +22,7 @@ func EntityToErrorEventResponse(event entity.ErrorEvent) dtos.ErrorEventResponse
 		count = 1
 	}
 	if firstSeen.IsZero() {
-		firstSeen = event.ReceivedAt
+		firstSeen = event.Timestamp
 	}
 	return dtos.ErrorEventResponse{
 		ID: event.ID, OccurrenceCount: count, FirstSeen: firstSeen, ProjectID: event.ProjectID, Timestamp: event.Timestamp, ReceivedAt: event.ReceivedAt,
