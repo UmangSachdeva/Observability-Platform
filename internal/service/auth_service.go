@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
@@ -12,6 +13,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 
 	"observability-platform/internal/dtos"
 	"observability-platform/internal/mapper"
@@ -89,6 +93,35 @@ func (s *AuthService) ListAPIKeys(ctx context.Context, userID string) (dtos.List
 	return response, nil
 }
 
+var ErrInvalidAPIKey = utils.NewError(401, "unauthorized", "Valid X-Access-Key and X-Secret-Key headers required")
+
+// AuthenticateKey checks an access key and its secret sent as headers. OTLP
+// exporters use this: they can send fixed headers but cannot sign each body,
+// so the secret travels in the request and HTTPS is required in production.
+func (s *AuthService) AuthenticateKey(ctx context.Context, accessKey, secretKey string) (ClientIdentity, error) {
+	if accessKey == "" || secretKey == "" || len(accessKey) > 256 || len(secretKey) > 256 {
+		return ClientIdentity{}, ErrInvalidAPIKey
+	}
+	credential, err := s.keys.FindByAccessKey(ctx, accessKey)
+	if errors.Is(err, interfaces.ErrAPIKeyNotFound) {
+		return ClientIdentity{}, ErrInvalidAPIKey
+	}
+	if err != nil {
+		return ClientIdentity{}, utils.WrapError(503, "authentication_unavailable", "Could not verify request credentials", fmt.Errorf("look up API key: %w", err))
+	}
+	secret, err := s.secrets.Decrypt(credential.EncryptedSecret, nil)
+	if err != nil {
+		return ClientIdentity{}, utils.WrapError(500, "internal_error", "Could not verify request credentials", fmt.Errorf("decrypt API key secret: %w", err))
+	}
+	if subtle.ConstantTimeCompare(secret, []byte(secretKey)) != 1 {
+		return ClientIdentity{}, ErrInvalidAPIKey
+	}
+	if credential.ProjectID == "" || credential.AccountID == "" {
+		return ClientIdentity{}, ErrAPIKeyNotScoped
+	}
+	return ClientIdentity{AccessKey: credential.AccessKey, AccountID: credential.AccountID, ProjectID: credential.ProjectID}, nil
+}
+
 // ClientIdentity identifies the project an authenticated API key writes to.
 type ClientIdentity struct {
 	AccessKey string
@@ -101,6 +134,18 @@ var ErrAPIKeyNotScoped = utils.NewError(403, "key_not_scoped",
 
 // Authenticate verifies a signed request and returns the key's project.
 func (s *AuthService) Authenticate(ctx context.Context, accessKey, timestamp, method, requestURI string, body []byte, signature string) (ClientIdentity, error) {
+	ctx, span := tracer.Start(ctx, "AuthService.Authenticate", trace.WithAttributes(attribute.String("auth.method", "hmac-sha256")))
+	defer span.End()
+	client, err := s.authenticate(ctx, accessKey, timestamp, method, requestURI, body, signature)
+	if err == nil {
+		span.SetAttributes(attribute.String("project.id", client.ProjectID))
+	} else {
+		span.SetAttributes(attribute.Bool("auth.rejected", true))
+	}
+	return client, err
+}
+
+func (s *AuthService) authenticate(ctx context.Context, accessKey, timestamp, method, requestURI string, body []byte, signature string) (ClientIdentity, error) {
 	if accessKey == "" || timestamp == "" || signature == "" {
 		return ClientIdentity{}, ErrInvalidSignature
 	}

@@ -27,6 +27,10 @@ type LoginRequest struct {
 	Password string `json:"password"`
 }
 
+type RefreshRequest struct {
+	RefreshToken string `json:"refresh_token"`
+}
+
 type LoginResponse struct {
 	AccountID        string    `json:"account_id,omitempty"`
 	AccessToken      string    `json:"access_token"`

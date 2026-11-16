@@ -144,42 +144,87 @@ type UserIdentity struct {
 
 var ErrInvalidUserToken = utils.NewError(401, "unauthorized", "Valid user bearer token required")
 
+var ErrInvalidRefreshToken = utils.NewError(401, "invalid_refresh_token", "Refresh token is invalid or expired; log in again")
+
 func (s *UserService) AuthenticateToken(token string) (UserIdentity, error) {
+	claims, ok := s.verifyToken(token, "access", userTokenLifetime)
+	if !ok {
+		return UserIdentity{}, ErrInvalidUserToken
+	}
+	return UserIdentity{ID: claims.Subject, Username: claims.Username, Email: claims.Email}, nil
+}
+
+// Refresh exchanges a valid refresh token for a new access and refresh token
+// pair. The new tokens carry the user's current username and email. Refresh
+// tokens are stateless JWTs, so a token stays usable until it expires even
+// after it has been exchanged.
+func (s *UserService) Refresh(ctx context.Context, request dtos.RefreshRequest) (dtos.LoginResponse, error) {
+	token := strings.TrimSpace(request.RefreshToken)
+	if token == "" || len(token) > 4096 {
+		return dtos.LoginResponse{}, ErrInvalidRefreshToken
+	}
+	claims, ok := s.verifyToken(token, "refresh", userRefreshTokenLifetime)
+	if !ok {
+		return dtos.LoginResponse{}, ErrInvalidRefreshToken
+	}
+	user, err := s.users.FindByID(ctx, claims.Subject)
+	if errors.Is(err, interfaces.ErrUserNotFound) {
+		return dtos.LoginResponse{}, ErrInvalidRefreshToken
+	}
+	if err != nil {
+		return dtos.LoginResponse{}, utils.WrapError(503, "storage_unavailable", "Could not verify refresh token", err)
+	}
+	account, err := s.accounts.FindDefaultForUser(ctx, user.ID)
+	if err != nil && !errors.Is(err, interfaces.ErrAccountNotFound) {
+		return dtos.LoginResponse{}, utils.WrapError(503, "storage_unavailable", "Could not load user account", err)
+	}
+	accessToken, refreshToken, accessExpiresAt, refreshExpiresAt, err := s.createTokenPair(user)
+	if err != nil {
+		return dtos.LoginResponse{}, utils.WrapError(500, "token_creation_failed", "Could not create login tokens", err)
+	}
+	return dtos.LoginResponse{
+		AccountID: account.ID, AccessToken: accessToken, RefreshToken: refreshToken, TokenType: "Bearer",
+		ExpiresAt: accessExpiresAt, RefreshExpiresAt: refreshExpiresAt,
+	}, nil
+}
+
+// verifyToken checks the signature, token_use and lifetime of a user JWT.
+func (s *UserService) verifyToken(token, tokenUse string, maxLifetime time.Duration) (userTokenClaims, bool) {
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
-		return UserIdentity{}, ErrInvalidUserToken
+		return userTokenClaims{}, false
 	}
 	headerJSON, err := base64.RawURLEncoding.DecodeString(parts[0])
 	if err != nil {
-		return UserIdentity{}, ErrInvalidUserToken
+		return userTokenClaims{}, false
 	}
 	var header map[string]string
 	if err := json.Unmarshal(headerJSON, &header); err != nil || header["alg"] != "HS256" || header["typ"] != "JWT" {
-		return UserIdentity{}, ErrInvalidUserToken
+		return userTokenClaims{}, false
 	}
 	provided, err := base64.RawURLEncoding.DecodeString(parts[2])
 	if err != nil {
-		return UserIdentity{}, ErrInvalidUserToken
+		return userTokenClaims{}, false
 	}
 	unsigned := parts[0] + "." + parts[1]
 	mac := hmac.New(sha256.New, s.tokenKey)
 	_, _ = mac.Write([]byte(unsigned))
 	if !hmac.Equal(provided, mac.Sum(nil)) {
-		return UserIdentity{}, ErrInvalidUserToken
+		return userTokenClaims{}, false
 	}
 	claimsJSON, err := base64.RawURLEncoding.DecodeString(parts[1])
 	if err != nil {
-		return UserIdentity{}, ErrInvalidUserToken
+		return userTokenClaims{}, false
 	}
 	var claims userTokenClaims
 	if err := json.Unmarshal(claimsJSON, &claims); err != nil {
-		return UserIdentity{}, ErrInvalidUserToken
+		return userTokenClaims{}, false
 	}
 	now := time.Now().Unix()
-	if claims.Subject == "" || claims.TokenUse != "access" || claims.Expires <= now || claims.IssuedAt > now+60 || claims.Expires-claims.IssuedAt > int64(userTokenLifetime.Seconds()) {
-		return UserIdentity{}, ErrInvalidUserToken
+	if claims.Subject == "" || claims.TokenUse != tokenUse || claims.Expires <= now || claims.IssuedAt > now+60 || claims.Expires-claims.IssuedAt > int64(maxLifetime.Seconds()) {
+		return userTokenClaims{}, false
 	}
-	return UserIdentity{ID: claims.Subject, Username: claims.Username, Email: claims.Email}, nil
+	return claims, true
 }
 
 func (s *UserService) createTokenPair(user entity.User) (accessToken, refreshToken string, accessExpiresAt, refreshExpiresAt time.Time, err error) {
